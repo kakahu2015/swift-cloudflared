@@ -118,6 +118,7 @@ public actor CloudflareTunnelProvider: TunnelProviding {
     private var acceptTask: Task<Void, Never>?
     private var bridgeTasks: [UUID: Task<Void, Never>] = [:]
     private var bridgeSockets: [UUID: Int32] = [:]
+    private var latestBridgeFailure: String?
 
     public init(
         requestBuilder: AccessRequestBuilder = AccessRequestBuilder(),
@@ -139,6 +140,7 @@ public actor CloudflareTunnelProvider: TunnelProviding {
         guard listeningSocket < 0 else {
             throw Failure.invalidState("tunnel already open")
         }
+        latestBridgeFailure = nil
 
         let originURL = try originURLResolver(hostname)
         let websocketURL = try URLTools.websocketURL(from: originURL)
@@ -273,6 +275,10 @@ public actor CloudflareTunnelProvider: TunnelProviding {
         }
     }
 
+    public func latestFailureDescription() -> String? {
+        latestBridgeFailure
+    }
+
     private func startBridge(
         clientFD: Int32,
         websocketURL: URL,
@@ -288,15 +294,18 @@ public actor CloudflareTunnelProvider: TunnelProviding {
         bridgeSockets[bridgeID] = clientFD
 
         let bridgeTask = Task.detached(priority: .utility) { [weak self] in
-            await Self.runBridge(
+            let failure = await Self.runBridge(
                 clientFD: clientFD,
                 websocketURL: websocketURL,
                 authContext: authContext,
                 method: method,
                 requestBuilder: requestBuilder,
-                websocketDialer: websocketDialer
+                websocketDialer: websocketDialer,
+                onFailure: { [weak self] failure in
+                    await self?.recordBridgeFailure(failure)
+                }
             )
-            await self?.bridgeFinished(id: bridgeID)
+            await self?.bridgeFinished(id: bridgeID, failure: failure)
         }
 
         bridgeTasks[bridgeID] = bridgeTask
@@ -342,9 +351,16 @@ public actor CloudflareTunnelProvider: TunnelProviding {
         listeningSocket = -1
     }
 
-    private func bridgeFinished(id: UUID) {
+    private func bridgeFinished(id: UUID, failure: String?) {
         bridgeTasks[id] = nil
         bridgeSockets[id] = nil
+        if let failure {
+            latestBridgeFailure = failure
+        }
+    }
+
+    private func recordBridgeFailure(_ failure: String) {
+        latestBridgeFailure = failure
     }
 
     private static func runBridge(
@@ -353,17 +369,20 @@ public actor CloudflareTunnelProvider: TunnelProviding {
         authContext: AuthContext,
         method: AuthMethod,
         requestBuilder: AccessRequestBuilder,
-        websocketDialer: any WebSocketDialing
-    ) async {
+        websocketDialer: any WebSocketDialing,
+        onFailure: @escaping @Sendable (String) async -> Void
+    ) async -> String? {
         let request = requestBuilder.build(originURL: websocketURL, authContext: authContext)
 
         let websocketClient: any WebSocketClient
         do {
             websocketClient = try await websocketDialer.connect(request: request)
         } catch {
+            let failure = "Cloudflare WebSocket connection failed: \(error.localizedDescription)"
+            await onFailure(failure)
             _ = systemShutdown(clientFD)
             _ = systemClose(clientFD)
-            return
+            return failure
         }
 
         defer {
@@ -371,7 +390,7 @@ public actor CloudflareTunnelProvider: TunnelProviding {
             _ = systemClose(clientFD)
         }
 
-        await withTaskGroup(of: Void.self) { group in
+        let failure = await withTaskGroup(of: String?.self, returning: String?.self) { group in
             group.addTask {
                 await pumpClientToWebSocket(clientFD: clientFD, websocketClient: websocketClient)
             }
@@ -379,22 +398,37 @@ public actor CloudflareTunnelProvider: TunnelProviding {
                 await pumpWebSocketToClient(clientFD: clientFD, websocketClient: websocketClient)
             }
 
-            _ = await group.next()
+            var failure: String?
+            if let firstResult = await group.next() {
+                failure = firstResult
+            }
+            if let failure {
+                await onFailure(failure)
+            }
             group.cancelAll()
 
             _ = systemShutdown(clientFD)
             await websocketClient.close()
 
-            while await group.next() != nil {}
+            while let result = await group.next() {
+                if failure == nil {
+                    failure = result
+                    if let result {
+                        await onFailure(result)
+                    }
+                }
+            }
+            return failure
         }
 
         await websocketClient.close()
 
         // Keep interface stable for future method-dependent transport decisions.
         _ = method
+        return failure
     }
 
-    private static func pumpClientToWebSocket(clientFD: Int32, websocketClient: any WebSocketClient) async {
+    private static func pumpClientToWebSocket(clientFD: Int32, websocketClient: any WebSocketClient) async -> String? {
         var buffer = [UInt8](repeating: 0, count: 16 * 1024)
 
         while !Task.isCancelled {
@@ -406,10 +440,10 @@ public actor CloudflareTunnelProvider: TunnelProviding {
                 do {
                     try await websocketClient.send(data: Data(buffer[0..<readCount]))
                 } catch {
-                    return
+                    return "Cloudflare WebSocket send failed: \(error.localizedDescription)"
                 }
             } else if readCount == 0 {
-                return
+                return nil
             } else {
                 let errorCode = errno
                 if isInterrupted(errorCode) {
@@ -419,21 +453,22 @@ public actor CloudflareTunnelProvider: TunnelProviding {
                     try? await Task.sleep(nanoseconds: ioRetryNanoseconds)
                     continue
                 }
-                return
+                return "Local tunnel read failed with errno \(errorCode)"
             }
         }
+        return nil
     }
 
-    private static func pumpWebSocketToClient(clientFD: Int32, websocketClient: any WebSocketClient) async {
+    private static func pumpWebSocketToClient(clientFD: Int32, websocketClient: any WebSocketClient) async -> String? {
         while !Task.isCancelled {
             let payload: Data
             do {
                 guard let next = try await websocketClient.receive() else {
-                    return
+                    return nil
                 }
                 payload = next
             } catch {
-                return
+                return "Cloudflare WebSocket receive failed: \(error.localizedDescription)"
             }
 
             guard !payload.isEmpty else {
@@ -441,9 +476,10 @@ public actor CloudflareTunnelProvider: TunnelProviding {
             }
 
             if !(await writeAll(fd: clientFD, data: payload)) {
-                return
+                return Task.isCancelled ? nil : "Local tunnel write failed"
             }
         }
+        return nil
     }
 
     private static func writeAll(fd: Int32, data: Data) async -> Bool {
@@ -551,11 +587,11 @@ public actor CloudflareTunnelProvider: TunnelProviding {
 #if DEBUG
 extension CloudflareTunnelProvider {
     static func _testPumpClientToWebSocket(clientFD: Int32, websocketClient: any WebSocketClient) async {
-        await pumpClientToWebSocket(clientFD: clientFD, websocketClient: websocketClient)
+        _ = await pumpClientToWebSocket(clientFD: clientFD, websocketClient: websocketClient)
     }
 
     static func _testPumpWebSocketToClient(clientFD: Int32, websocketClient: any WebSocketClient) async {
-        await pumpWebSocketToClient(clientFD: clientFD, websocketClient: websocketClient)
+        _ = await pumpWebSocketToClient(clientFD: clientFD, websocketClient: websocketClient)
     }
 }
 #endif

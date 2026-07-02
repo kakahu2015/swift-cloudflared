@@ -19,12 +19,11 @@ Use it to open an Access-authenticated local endpoint (`127.0.0.1:<port>`) and c
   - one active local client by default
   - listener closes after first accepted client by default
 - Pluggable auth, token storage, and tunnel layers
-- Built-in keychain token store on `macOS`, `iOS`, `tvOS`, `watchOS`
+- Built-in keychain token store on iOS
 
 ## Platforms
 
 - iOS 16+
-- macOS 13+
 - Swift tools 6.0+
 
 ## Installation
@@ -146,8 +145,7 @@ actor CustomTokenStore: TokenStore {
 Then inject it into `OAuthProvider`.
 
 `KeychainTokenStore` defaults:
-- iOS/tvOS/watchOS: `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`
-- macOS: `kSecAttrAccessibleAfterFirstUnlock` + data-protection keychain mode
+- iOS: `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`
 
 iCloud Keychain options:
 
@@ -179,19 +177,6 @@ let tunnel = CloudflareTunnelProvider(
 ## Sandbox and Entitlements
 
 - iOS app sandbox: supported (foreground usage; OAuth flow is app-defined).
-- macOS App Sandbox: enable network client/server entitlements if sandboxed, because the SDK opens:
-  - outbound websocket connection to Cloudflare Access
-  - local loopback listener for SSH client connection
-
-## E2E Harness
-
-Run the local interactive harness:
-
-```bash
-swift run cloudflared-e2e
-```
-
-It prints a local endpoint (`127.0.0.1:<port>`) you can test with SSH/libssh2.
 
 ## Development
 
