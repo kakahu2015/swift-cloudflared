@@ -65,7 +65,9 @@ public struct OAuthProvider: AuthProviding {
     }
 
     private func makeCacheKey(teamDomain: String, appDomain: String, hostname: String) -> String {
-        "oauth|\(teamDomain)|\(appDomain)|\(hostname)"
+        [teamDomain, appDomain, hostname]
+            .map { "\($0.utf8.count):\($0)" }
+            .joined(separator: "|")
     }
 }
 

@@ -1,10 +1,6 @@
 # swift-cloudflared
 
-[![GitHub](https://img.shields.io/badge/-GitHub-181717?style=flat-square&logo=github&logoColor=white)](https://github.com/wiedymi)
-[![Twitter](https://img.shields.io/badge/-Twitter-1DA1F2?style=flat-square&logo=twitter&logoColor=white)](https://x.com/wiedymi)
-[![Email](https://img.shields.io/badge/-Email-EA4335?style=flat-square&logo=gmail&logoColor=white)](mailto:contact@wiedymi.com)
-[![Discord](https://img.shields.io/badge/-Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/zemMZtrkSb)
-[![Support me](https://img.shields.io/badge/-Support%20me-ff69b4?style=flat-square&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/vivy-company)
+[![GitHub](https://img.shields.io/badge/-GitHub-181717?style=flat-square&logo=github&logoColor=white)](https://github.com/kakahu2015)
 
 Pure Swift Cloudflare Access TCP tunnel SDK for SSH clients on Apple platforms.
 
@@ -32,7 +28,7 @@ Add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/wiedymi/swift-cloudflared.git", from: "0.1.0")
+    .package(url: "https://github.com/kakahu2015/swift-cloudflared.git", branch: "main")
 ]
 ```
 
@@ -181,14 +177,9 @@ let tunnel = CloudflareTunnelProvider(
 ## Development
 
 ```bash
-swift test
-swift build
-```
-
-Optional keychain integration test:
-
-```bash
-CLOUDFLARED_KEYCHAIN_TESTS=1 swift test --filter TokenStoreTests/testKeychainStoreRoundTrip
+xcodebuild -scheme Cloudflared \
+  -destination 'generic/platform=iOS Simulator' \
+  CODE_SIGNING_ALLOWED=NO build
 ```
 
 ## Docs
@@ -198,10 +189,6 @@ CLOUDFLARED_KEYCHAIN_TESTS=1 swift test --filter TokenStoreTests/testKeychainSto
 - `docs/API.md` - API surface and compatibility notes
 - `docs/PROTOCOL_MAPPING.md` - upstream behavior mapping
 - `docs/TEST_COVERAGE.md` - test traceability/coverage gates
-
-## Repository Notes
-
-- `reference/cloudflared` is included as a git submodule for upstream reference.
 
 ## License
 

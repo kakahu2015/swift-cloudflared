@@ -98,6 +98,11 @@ public struct TransferOAuthFlow: OAuthFlow {
 
         do {
             let token = try await pollForAppToken(transferKeyPair: transferKeyPair)
+            try JWTValidator().validate(
+                token,
+                expectedAudience: appInfo.appAUD,
+                expectedIssuerHost: appInfo.authDomain
+            )
             await webSession.stop()
             return token
         } catch {
@@ -486,10 +491,6 @@ public struct TransferOAuthFlow: OAuthFlow {
                     return jwt
                 }
 
-                if let anyJWTCookie = cookies.first(where: { normalizedJWTCandidate($0.value) != nil }),
-                   let jwt = normalizedJWTCandidate(anyJWTCookie.value) {
-                    return jwt
-                }
             }
 
             return nil
