@@ -22,6 +22,11 @@ let package = Package(
                 .product(name: "TweetNacl", package: "tweetnacl-swiftwrap")
             ],
             path: "Sources/Cloudflared"
+        ),
+        .testTarget(
+            name: "CloudflaredTests",
+            dependencies: ["Cloudflared"],
+            path: "Tests/CloudflaredTests"
         )
     ]
 )
