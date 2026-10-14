@@ -8,7 +8,9 @@ public struct RetryPolicy: Sendable, Equatable {
     }
 
     public func delayNanoseconds(for attempt: Int) -> UInt64 {
-        baseDelayNanoseconds * UInt64(max(1, attempt))
+        let multiplier = UInt64(max(1, attempt))
+        let (delay, overflow) = baseDelayNanoseconds.multipliedReportingOverflow(by: multiplier)
+        return overflow ? UInt64.max : delay
     }
 }
 
